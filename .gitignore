@@ -1,0 +1,9 @@
+.vs/
+bin/**/*.*
+!bin/**/*.dll
+PciLeechPlugin/x64
+PciLeechPlugin/leechcore.h
+PciLeechPlugin/vmmdll.h
+PciLeechPlugin/vmm.lib
+*.aps
+*.user
