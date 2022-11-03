@@ -13,6 +13,8 @@ extern "C" void RC_CallConv EnumerateProcesses( EnumerateProcessCallback callbac
 	static bool init = false;
 
 	if ( !init ) {
+		// Super handy when you wanna reverse without having the app running
+		//LPSTR argv[] = { "", "-device", "D:\\memory.dmp" }; 
 		LPSTR argv[] = { "", "-device", "fpga" };
 		BOOL result = VMMDLL_Initialize( 3, argv );
 
@@ -156,7 +158,6 @@ extern "C" void RC_CallConv EnumerateRemoteSectionsAndModules( RC_Pointer handle
 
 	if (!result) {
 		LocalFree(pModuleEntries);
-
 		return;
 	}
 
