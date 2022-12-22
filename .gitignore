@@ -7,3 +7,4 @@ PciLeechPlugin/vmmdll.h
 PciLeechPlugin/vmm.lib
 *.aps
 *.user
+bin/
