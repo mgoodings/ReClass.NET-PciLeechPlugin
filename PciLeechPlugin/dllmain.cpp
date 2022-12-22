@@ -1,28 +1,36 @@
 #include "vmmdll.h"
-#include <ReClassNET_Plugin.hpp>
+#include "ReClassNET_Plugin.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <vector>
+#include <shlwapi.h>
+
+static VMM_HANDLE _hVmm = NULL;
+
+static const bool _hasMemMap = PathFileExistsW(L"mmap.txt");
 
 extern "C" void RC_CallConv EnumerateProcesses( EnumerateProcessCallback callbackProcess ) {
 	if ( callbackProcess == nullptr ) {
 		return;
 	}
 
-	// TODO: Ghetto init code, make this better
-	static bool init = false;
+	if ( !_hVmm) {
+		if (_hasMemMap)
+		{
+			LPSTR argv[] = { "-v", "-device", "fpga", "-memmap", "mmap.txt", "-waitinitialize" };
+			_hVmm = VMMDLL_Initialize(6, argv);
+		}
+		else 
+		{
+			LPSTR argv[] = { "-v", "-device", "fpga", "-waitinitialize" };
+			_hVmm = VMMDLL_Initialize(4, argv);
+		}
 
-	if ( !init ) {
-		LPSTR argv[] = { "", "-device", "fpga" };
-		BOOL result = VMMDLL_Initialize( 3, argv );
-
-		if ( !result ) {
+		if ( !_hVmm) {
 			MessageBoxA( 0, "FAIL: VMMDLL_Initialize", 0, MB_OK | MB_ICONERROR );
 
 			ExitProcess( -1 );
 		}
-
-		init = true;
 	}
 
 	BOOL result;
@@ -30,7 +38,7 @@ extern "C" void RC_CallConv EnumerateProcesses( EnumerateProcessCallback callbac
 	DWORD i, *pPIDs = NULL;
 
 	result =
-	    VMMDLL_PidList( NULL, &cPIDs ) && ( pPIDs = ( DWORD* ) LocalAlloc( LMEM_ZEROINIT, cPIDs * sizeof( DWORD ) ) ) && VMMDLL_PidList( pPIDs, &cPIDs );
+	    VMMDLL_PidList(_hVmm, NULL, &cPIDs ) && ( pPIDs = ( DWORD* ) LocalAlloc( LMEM_ZEROINIT, cPIDs * sizeof( DWORD ) ) ) && VMMDLL_PidList(_hVmm, pPIDs, &cPIDs );
 
 	if ( !result ) {
 		LocalFree( pPIDs );
@@ -46,14 +54,14 @@ extern "C" void RC_CallConv EnumerateProcesses( EnumerateProcessCallback callbac
 		info.magic = VMMDLL_PROCESS_INFORMATION_MAGIC;
 		info.wVersion = VMMDLL_PROCESS_INFORMATION_VERSION;
 
-		result = VMMDLL_ProcessGetInformation( dwPID, &info, &cbInfo );
+		result = VMMDLL_ProcessGetInformation(_hVmm, dwPID, &info, &cbInfo );
 
 		if ( result ) {
 			EnumerateProcessData data = {};
 			data.Id = dwPID;
 			MultiByteToUnicode( info.szNameLong, data.Name, PATH_MAXIMUM_LENGTH );
 
-			LPSTR szPathUser = VMMDLL_ProcessGetInformationString( dwPID, VMMDLL_PROCESS_INFORMATION_OPT_STRING_PATH_USER_IMAGE );
+			LPSTR szPathUser = VMMDLL_ProcessGetInformationString(_hVmm, dwPID, VMMDLL_PROCESS_INFORMATION_OPT_STRING_PATH_USER_IMAGE );
 
 			if ( szPathUser ) {
 				MultiByteToUnicode( szPathUser, data.Path, PATH_MAXIMUM_LENGTH );
@@ -80,9 +88,7 @@ extern "C" void RC_CallConv EnumerateRemoteSectionsAndModules( RC_Pointer handle
 	PVMMDLL_MAP_PTE pMemMapEntries = NULL;
 	PVMMDLL_MAP_PTEENTRY memMapEntry = NULL;
 
-	result = VMMDLL_Map_GetPte( dwPID, NULL, &cMemMapEntries, TRUE ) && cMemMapEntries &&
-		 ( pMemMapEntries = (PVMMDLL_MAP_PTE) LocalAlloc( 0, cMemMapEntries) ) &&
-		VMMDLL_Map_GetPte( dwPID, pMemMapEntries, &cMemMapEntries, TRUE );
+	result = VMMDLL_Map_GetPte(_hVmm, dwPID, TRUE, &pMemMapEntries);
 
 	if (!result) {
 		MessageBoxA(0, "FAIL: VMMDLL_Map_GetPte", 0, MB_OK | MB_ICONERROR);
@@ -90,11 +96,6 @@ extern "C" void RC_CallConv EnumerateRemoteSectionsAndModules( RC_Pointer handle
 		ExitProcess(-1);
 	}
 
-	if ( !result ) {
-		LocalFree( pMemMapEntries );
-
-		return;
-	}
 
 	std::vector< EnumerateRemoteSectionData > sections;
 	
@@ -139,25 +140,17 @@ extern "C" void RC_CallConv EnumerateRemoteSectionsAndModules( RC_Pointer handle
 
 		sections.push_back( std::move( section ) );
 	}
-	LocalFree( pMemMapEntries );
+	VMMDLL_MemFree( pMemMapEntries );
 
 	DWORD cModuleEntries = 0;
 	PVMMDLL_MAP_MODULE pModuleEntries = NULL;
 
-	result = VMMDLL_Map_GetModule(dwPID, NULL, &cModuleEntries) && cModuleEntries &&
-		(pModuleEntries = (PVMMDLL_MAP_MODULE)LocalAlloc(0, cModuleEntries)) &&
-		VMMDLL_Map_GetModule(dwPID, pModuleEntries, &cModuleEntries);
+	result = VMMDLL_Map_GetModule(_hVmm, dwPID, &pModuleEntries);
 
 	if (!result) {
 		MessageBoxA(0, "FAIL: VMMDLL_Map_GetModule", 0, MB_OK | MB_ICONERROR);
 
 		ExitProcess(-1);
-	}
-
-	if (!result) {
-		LocalFree(pModuleEntries);
-
-		return;
 	}
 
 	for (i = 0; i < pModuleEntries->cMap; i++) {
@@ -182,9 +175,9 @@ extern "C" void RC_CallConv EnumerateRemoteSectionsAndModules( RC_Pointer handle
 		DWORD cSections = 0;
 		PIMAGE_SECTION_HEADER sectionEntry, pSections = NULL;
 
-		result = VMMDLL_ProcessGetSections(dwPID, pModuleEntries->pMap[i].wszText, NULL, 0, &cSections) && cSections &&
+		result = VMMDLL_ProcessGetSections(_hVmm, dwPID, pModuleEntries->pMap[i].wszText, NULL, 0, &cSections) && cSections &&
 			(pSections = (PIMAGE_SECTION_HEADER)LocalAlloc(0, cSections * sizeof(IMAGE_SECTION_HEADER))) &&
-			VMMDLL_ProcessGetSections(dwPID, pModuleEntries->pMap[i].wszText, pSections, cSections, &cSections);
+			VMMDLL_ProcessGetSections(_hVmm, dwPID, pModuleEntries->pMap[i].wszText, pSections, cSections, &cSections);
 
 		if (result) {
 			for (j = 0; j < cSections; j++) {
@@ -217,6 +210,7 @@ extern "C" void RC_CallConv EnumerateRemoteSectionsAndModules( RC_Pointer handle
 				}
 			}
 		}
+		VMMDLL_MemFree(pModuleEntries);
 		LocalFree(pSections);
 		// </warning>
 		// !!!!!!!!!!
@@ -244,33 +238,35 @@ extern "C" bool RC_CallConv IsProcessValid( RC_Pointer handle ) {
 	info.magic = VMMDLL_PROCESS_INFORMATION_MAGIC;
 	info.wVersion = VMMDLL_PROCESS_INFORMATION_VERSION;
 
-	if ( VMMDLL_ProcessGetInformation( ( DWORD ) handle, &info, &cbInfo ) ) {
+	if ( VMMDLL_ProcessGetInformation(_hVmm, ( DWORD ) handle, &info, &cbInfo ) ) {
 		return true;
 	}
 
 	return false;
 }
 
-extern "C" void RC_CallConv CloseRemoteProcess( RC_Pointer handle ) {
+extern "C" void RC_CallConv CloseRemoteProcess( RC_Pointer handle ) 
+{
+	if (_hVmm)
+	{
+		VMMDLL_Close(_hVmm);
+		_hVmm = NULL;
+	}
 }
 
 extern "C" bool RC_CallConv ReadRemoteMemory( RC_Pointer handle, RC_Pointer address, RC_Pointer buffer, int offset, int size ) {
 	buffer = reinterpret_cast< RC_Pointer >( reinterpret_cast< uintptr_t >( buffer ) + offset );
 
-	if ( VMMDLL_MemRead( ( DWORD ) handle, ( ULONG64 ) address, ( PBYTE ) buffer, size ) ) {
+	if ( VMMDLL_MemRead(_hVmm, ( DWORD ) handle, ( ULONG64 ) address, ( PBYTE ) buffer, size ) ) {
 		return true;
 	}
 
 	return false;
 }
 
-extern "C" bool RC_CallConv WriteRemoteMemory( RC_Pointer handle, RC_Pointer address, RC_Pointer buffer, int offset, int size ) {
-	buffer = reinterpret_cast< RC_Pointer >( reinterpret_cast< uintptr_t >( buffer ) + offset );
-
-	if ( VMMDLL_MemWrite( ( DWORD ) handle, ( ULONG64 ) address, ( PBYTE ) buffer, size ) ) {
-		return true;
-	}
-
+extern "C" bool RC_CallConv WriteRemoteMemory( RC_Pointer handle, RC_Pointer address, RC_Pointer buffer, int offset, int size ) 
+{
+	// Mem Writing Not Supported!
 	return false;
 }
 
