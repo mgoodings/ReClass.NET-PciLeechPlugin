@@ -1,5 +1,5 @@
 ## Notes on this fork
-- Updated for MemProcFS v5.2
+- Updated for MemProcFS v5.3
 
 # ReClass.NET-PciLeechPlugin
 A plugin that integrates vmm.dll from the https://github.com/ufrisk/MemProcFS project to allow ReClass.NET to function over a PCIe FPGA device.
