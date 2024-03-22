@@ -17,12 +17,12 @@ extern "C" void RC_CallConv EnumerateProcesses(EnumerateProcessCallback callback
 	if (!_hVmm) {
 		if (_hasMemMap)
 		{
-			LPSTR argv[] = { "-v", "-device", "fpga", "-memmap", "mmap.txt", "-waitinitialize" };
+			LPCSTR argv[] = { "-v", "-device", "fpga", "-memmap", "mmap.txt", "-waitinitialize" };
 			_hVmm = VMMDLL_Initialize(6, argv);
 		}
 		else
 		{
-			LPSTR argv[] = { "-v", "-device", "fpga", "-waitinitialize" };
+			LPCSTR argv[] = { "-v", "-device", "fpga", "-waitinitialize" };
 			_hVmm = VMMDLL_Initialize(4, argv);
 		}
 
